@@ -276,9 +276,9 @@ class json_file_data_loader(file_data_loader):
                     elif j <= pos_min:
                         self.data_mask[i][j] = 1
                     elif j <= pos_max:
-                        self.data_mask[i][j] = 2
+                        self.data_mask[i][j] = 1 # 2
                     else:
-                        self.data_mask[i][j] = 3
+                        self.data_mask[i][j] = 1 # 3
                     
             if last_entpair != '':
                 self.entpair2scope[last_entpair] = [last_entpair_pos, self.instance_tot] # left closed right open
@@ -439,7 +439,8 @@ if __name__=="__main__":
     print('Rel shape is {}'.format(batch_data['rel'].shape))    #[batch_size,]
     print('Ins_rel shape is {}'.format(batch_data['ins_rel'].shape))    #[real_size,]
     print('length shape is {}'.format(batch_data['length'].shape))  #[real_size,]
-
+    print("Mask shape is {}".format(batch_data['mask'].shape))  #[real_size, max_len]
+    
     # For example:      example = batch_data['scope'][0] #
     #                   batch_data['word'][example[0]:example[1]] is the first bag #
     print('Scope shape is {}'.format(batch_data['scope'].shape))    #[batch_size, 2]
