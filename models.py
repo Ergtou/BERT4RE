@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.init import xavier_uniform_, xavier_normal_
 
 from utils import split_last, merge_last
 
@@ -18,15 +19,16 @@ from utils import split_last, merge_last
 class Config(NamedTuple):
     "Configuration for BERT model"
     vocab_size: int = None # Size of Vocabulary
-    dim: int = 768 # Dimension of Hidden Layer in Transformer Encoder
-    n_layers: int = 12 # Numher of Hidden Layers
+    dim: int = 50 # Dimension of Hidden Layer in Transformer Encoder
+    n_layers: int = 2 # Numher of Hidden Layers
     n_heads: int = 12 # Numher of Heads in Multi-Headed Attention Layers
-    dim_ff: int = 768*4 # Dimension of Intermediate Layers in Positionwise Feedforward Net
+    dim_ff: int = 50*4 # Dimension of Intermediate Layers in Positionwise Feedforward Net
     #activ_fn: str = "gelu" # Non-linear Activation Function Type in Hidden Layers
     p_drop_hidden: float = 0.1 # Probability of Dropout of various Hidden Layers
     p_drop_attn: float = 0.1 # Probability of Dropout of Attention Layers
     max_len: int = 512 # Maximum Length for Positional Embeddings
     n_segments: int = 2 # Number of Sentence Segments
+    labels_number: int = 54
 
     @classmethod
     def from_json(cls, file):
@@ -55,9 +57,13 @@ class LayerNorm(nn.Module):
 
 class Embeddings(nn.Module):
     "The embedding module from word, position and token_type embeddings."
-    def __init__(self, cfg):
+    def __init__(self, cfg, word_vec_mat):
         super().__init__()
-        self.tok_embed = nn.Embedding(cfg.vocab_size, cfg.dim) # token embedding
+        #self.tok_embed = nn.Embedding(cfg.vocab_size, cfg.dim) # token embedding
+        self.tok_embed = torch.from_numpy(word_vec_mat)
+        self.other_embed = torch.Tensor(5, cfg.dim)
+        self.other_embed = xavier_normal_(self.other_embed)
+        self.tok_embed = nn.Embedding.from_pretrained(torch.cat([self.tok_embed, self.other_embed], 0))
         self.pos_embed = nn.Embedding(cfg.max_len, cfg.dim) # position embedding
         #self.seg_embed = nn.Embedding(cfg.n_segments, cfg.dim) # segment(token type) embedding
         self.pos1_embed = nn.Embedding(cfg.max_len * 2, cfg.dim)
@@ -71,7 +77,7 @@ class Embeddings(nn.Module):
         pos = torch.arange(seq_len, dtype=torch.long, device=x.device)
         pos = pos.unsqueeze(0).expand_as(x) # (S,) -> (B, S)
 
-        e = self.tok_embed(x) + self.pos_embed(pos) + self.pos1_embed(pos1) + self.pos2_embed(pos2)
+        e = self.tok_embed(x.long()) + self.pos_embed(pos.long()) + self.pos1_embed(pos1.long()) + self.pos2_embed(pos2.long())
         return self.drop(self.norm(e))
 
 
@@ -86,7 +92,7 @@ class MultiHeadedSelfAttention(nn.Module):
         self.scores = None # for visualization
         self.n_heads = cfg.n_heads
 
-        self.sel_att = nn.Linear(cfg.max_len, cfg.max_len)
+        self.sel_att = nn.Linear(cfg.dim // cfg.n_heads, cfg.max_len)
 
     def forward(self, x, mask):
         """
@@ -148,9 +154,9 @@ class Block(nn.Module):
 
 class Transformer(nn.Module):
     """ Transformer with Self-Attentive Blocks"""
-    def __init__(self, cfg):
+    def __init__(self, cfg, word_vec_mat):
         super().__init__()
-        self.embed = Embeddings(cfg)
+        self.embed = Embeddings(cfg, word_vec_mat)
         self.blocks = nn.ModuleList([Block(cfg) for _ in range(cfg.n_layers)])
 
     def forward(self, x, pos1, pos2, mask):

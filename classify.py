@@ -10,12 +10,14 @@ import fire
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
+import torch.nn.functional as F
 
-import tokenization
+#import tokenization
 import models
 import optim
 import train
 from data_loader import json_file_data_loader
+import os
 
 from utils import set_seeds, get_device, truncate_tokens_pair
 
@@ -152,20 +154,64 @@ class TokenIndexing(Pipeline):
 
 class Classifier(nn.Module):
     """ Classifier with Transformer """
-    def __init__(self, cfg, n_labels):
+    def __init__(self, cfg, n_labels, word_vec_mat):
         super().__init__()
-        self.transformer = models.Transformer(cfg)
+        self.transformer = models.Transformer(cfg, word_vec_mat)
         self.fc = nn.Linear(cfg.dim, cfg.dim)
         self.activ = nn.Tanh()
         self.drop = nn.Dropout(cfg.p_drop_hidden)
         self.classifier = nn.Linear(cfg.dim, n_labels)
+        self.att = nn.Embedding(cfg.labels_number, cfg.dim)
 
-    def forward(self, input_ids, pos1, pos2, input_mask):
+    def __attention_train_logit__(self, x, query):
+        current_relation = self.att(query.long())
+        attention_logit=( current_relation * x ).sum(-1)
+        return attention_logit
+
+    def __attention_test_logit__(self, x):
+        attention_logit = self.att.weight @ torch.transpose(x,0,1)
+        attention_logit = torch.transpose(attention_logit,0,1)
+        # [real_size, rel_numbers]
+        return attention_logit
+
+    def __logit__(self, x):
+        attention_logit = self.att.weight @ torch.transpose(x,0,1)
+        attention_logit = torch.transpose(attention_logit,0,1)
+        #logit = attention_logit + bias
+        return attention_logit
+
+    def forward(self, input_ids, pos1, pos2, input_mask, query, scope, evaluate = False):
         h = self.transformer(input_ids, pos1, pos2, input_mask)
         # only use the first h in the sequence
         pooled_h = self.activ(self.fc(h[:, 0]))
-        logits = self.classifier(self.drop(pooled_h))
-        return logits
+        
+        if evaluate == False:
+            attention_logit = self.__attention_train_logit__(pooled_h, query)
+            bag_repre = []
+            for i in range(scope.shape[0]):
+                bag_hidden_mat = pooled_h[scope[i][0]:scope[i][1]]
+                attention_score = F.softmax(attention_logit[scope[i][0]:scope[i][1]], -1)
+                number = attention_score.size()[0]
+                bag_repre.append((attention_score.expand(1, number) @ bag_hidden_mat).squeeze() ) # (1, n') x (n', hidden_size) = (1, hidden_size) -> (hidden_size)
+            bag_repre = torch.stack(bag_repre, dim = 0)
+            logits = self.classifier(self.drop(bag_repre))
+            return logits
+        
+        if evaluate == True:
+            attention_logit = self.__attention_test_logit__(pooled_h) # (n, rel_tot)
+            bag_repre = []
+            bag_logit = []
+            for i in range(scope.shape[0]):
+                bag_hidden_mat = pooled_h[scope[i][0]:scope[i][1]]
+                attention_score = F.softmax(torch.transpose(attention_logit[scope[i][0]:scope[i][1], :],0,1), -1) # softmax of (rel_tot, n')
+                bag_repre_for_each_rel = attention_score @ bag_hidden_mat # (rel_tot, n') \dot (n', hidden_size) = (rel_tot, hidden_size)
+                bag_logit_for_each_rel = self.__logit__(bag_repre_for_each_rel) # -> (rel_tot, rel_tot)
+                print(bag_logit_for_each_rel.shape)
+                bag_repre.append(bag_repre_for_each_rel)
+                bag_logit.append(F.softmax(bag_logit_for_each_rel, -1).diag()) # could be improved by sigmoid?
+            bag_repre = torch.stack(bag_repre, dim = 0)
+            bag_logit = torch.stack(bag_logit, dim = 0)
+            return bag_logit
 
 #pretrain_file='../uncased_L-12_H-768_A-12/bert_model.ckpt',
 #pretrain_file='../exp/bert/pretrain_100k/model_epoch_3_steps_9732.pt',
@@ -175,12 +221,12 @@ def main(task='mrpc',
          model_cfg='config/bert_base.json',
          data_file='../glue/MRPC/train.tsv',
          model_file=None,
-         pretrain_file='../uncased_L-12_H-768_A-12/bert_model.ckpt',
+         pretrain_file=None,
          data_parallel=True,
-         vocab='../uncased_L-12_H-768_A-12/vocab.txt',
+         vocab=None,
          save_dir='../exp/bert/mrpc',
          max_len=128,
-         mode='train'):
+         mode='eval'):
 
     cfg = train.Config.from_json(train_cfg)
     model_cfg = models.Config.from_json(model_cfg)
@@ -197,11 +243,12 @@ def main(task='mrpc',
     dataset = TaskDataset(data_file, pipeline)
     data_iter = DataLoader(dataset, batch_size=cfg.batch_size, shuffle=True)
     '''
+    dataset_dir = os.path.join('./data', 'nyt')
     data_iter = json_file_data_loader(os.path.join(dataset_dir, 'train.json'), 
                                         os.path.join(dataset_dir, 'word_vec.json'),
                                         os.path.join(dataset_dir, 'rel2id.json'), shuffle=True)
 
-    model = Classifier(model_cfg, cfg.labels_number)
+    model = Classifier(model_cfg, cfg.labels_number, data_iter.word_vec_mat)
     criterion = nn.CrossEntropyLoss()
 
     trainer = train.Trainer(cfg,
@@ -212,17 +259,17 @@ def main(task='mrpc',
 
     if mode == 'train':
         def get_loss(model, batch, global_step): # make sure loss is a scalar tensor
-            input_ids, pos1, pos2, input_mask, label_id = batch['word'], batch['pos1'], batch['pos2'], batch['mask'], batch['rel']
-            logits = model(input_ids, pos1, pos2, input_mask)
-            loss = criterion(logits, label_id)
+            input_ids, pos1, pos2, input_mask, label_id, query, scope = batch['word'], batch['pos1'], batch['pos2'], batch['mask'], batch['rel'], batch['ins_rel'], batch['scope']
+            logits = model(input_ids, pos1, pos2, input_mask, query, scope, evaluate = False)
+            loss = criterion(logits, label_id.long())
             return loss
 
         trainer.train(get_loss, model_file, pretrain_file, data_parallel)
 
     elif mode == 'eval':
         def evaluate(model, batch):
-            input_ids, segment_ids, input_mask, label_id = batch
-            logits = model(input_ids, segment_ids, input_mask)
+            input_ids, pos1, pos2, input_mask, label_id, query, scope = batch['word'], batch['pos1'], batch['pos2'], batch['mask'], batch['rel'], batch['ins_rel'], batch['scope']
+            logits = model(input_ids, pos1, pos2, input_mask, query, scope, evaluate = True)
             _, label_pred = logits.max(1)
             result = (label_pred == label_id).float() #.cpu().numpy()
             accuracy = result.mean()

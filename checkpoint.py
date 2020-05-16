@@ -37,7 +37,7 @@ def load_model(model, checkpoint_file):
     load_param(checkpoint_file, {
         e.tok_embed.weight: p+"word_embeddings",
         e.pos_embed.weight: p+"position_embeddings",
-        e.seg_embed.weight: p+"token_type_embeddings",
+        #e.seg_embed.weight: p+"token_type_embeddings",
         e.norm.gamma:       p+"LayerNorm/gamma",
         e.norm.beta:        p+"LayerNorm/beta"
     })

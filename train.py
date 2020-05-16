@@ -7,6 +7,7 @@ import json
 from typing import NamedTuple
 from tqdm import tqdm
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -54,8 +55,9 @@ class Trainer(object):
             loss_sum = 0. # the sum of iteration losses to get average loss in every epoch
             iter_bar = tqdm(self.data_iter, desc='Iter (loss=X.XXX)')
             for i, batch in enumerate(iter_bar):
-                batch = [t.to(self.device) for t in batch]
-
+                #batch = [t.to(self.device) for t in batch]
+                for k,v in batch.items():
+                    batch[k]= torch.from_numpy(np.array(v)).to(self.device)
                 self.optimizer.zero_grad()
                 loss = get_loss(model, batch, global_step).mean() # mean() for Data Parallelism
                 loss.backward()
@@ -88,7 +90,8 @@ class Trainer(object):
         results = [] # prediction results
         iter_bar = tqdm(self.data_iter, desc='Iter (loss=X.XXX)')
         for batch in iter_bar:
-            batch = [t.to(self.device) for t in batch]
+            for k,v in batch.items():
+                    batch[k]= torch.from_numpy(np.array(v)).to(self.device)
             with torch.no_grad(): # evaluation without gradient calculation
                 accuracy, result = evaluate(model, batch) # accuracy to print
             results.append(result)

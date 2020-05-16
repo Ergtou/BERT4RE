@@ -413,7 +413,7 @@ class json_file_data_loader(file_data_loader):
 
         #if self.mode == self.MODE_ENTPAIR_BAG:
         batch_data['multi_rel'] = np.stack(_multi_rel)
-        batch_data['entpair'] = _entpair
+        #batch_data['entpair'] = _entpair
 
         batch_data['length'] = np.concatenate(_length)
         batch_data['scope'] = np.stack(_scope)
@@ -443,4 +443,21 @@ if __name__=="__main__":
     
     # For example:      example = batch_data['scope'][0] #
     #                   batch_data['word'][example[0]:example[1]] is the first bag #
-    print('Scope shape is {}'.format(batch_data['scope'].shape))    #[batch_size, 2]
+    print('Scope is {}'.format(batch_data['scope'].shape))    #[batch_size, 2]
+
+    print('Word is {}'.format(batch_data['word'][0]))  #[real_size, max_len]
+    print('Pos1 is {}'.format(batch_data['pos1'][0]))  #[real_size, max_len]
+    print('Pos2 is {}'.format(batch_data['pos1'][0]))  #[real_size, max_len]
+    print('Rel is {}'.format(batch_data['rel'][0]))    #[batch_size,]
+    print('Ins_rel is {}'.format(batch_data['ins_rel'][0]))    #[real_size,]
+    print('length is {}'.format(batch_data['length'][0]))  #[real_size,]
+    print("Mask is {}".format(batch_data['mask'][0]))  #[real_size, max_len]
+    
+    # For example:      example = batch_data['scope'][0] #
+    #                   batch_data['word'][example[0]:example[1]] is the first bag #
+    print('Scope is {}'.format(batch_data['scope'][0]))    #[batch_size, 2]
+
+    for i, batch in enumerate(data_loader):
+        print(i)
+        print(batch)
+        exit()
