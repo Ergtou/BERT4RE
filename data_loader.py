@@ -6,6 +6,8 @@ import multiprocessing
 import numpy as np
 import random
 
+import platform
+
 class file_data_loader:
     def __next__(self):
         raise NotImplementedError
@@ -23,11 +25,20 @@ class json_file_data_loader(file_data_loader):
     MODE_RELFACT_BAG = 2   # One batch contains batch size bags, instances in which have the same relation fact. (usually for training).
 
     def _load_preprocessed_file(self):
-        print("file name is {}".format(self.file_name))
-        name_prefix = '.'.join(self.file_name.split('\\')[-1].split('.')[:-1])
-        print("name_prefix is {}".format(name_prefix))
-        word_vec_name_prefix = '.'.join(self.word_vec_file_name.split('\\')[-1].split('.')[:-1])
-        processed_data_dir = '_processed_data'
+        sys_base = platform.system()
+
+        if sys_base == "Windows":
+            print("file name is {}".format(self.file_name))
+            name_prefix = '.'.join(self.file_name.split('\\')[-1].split('.')[:-1])
+            print("name_prefix is {}".format(name_prefix))
+            word_vec_name_prefix = '.'.join(self.word_vec_file_name.split('\\')[-1].split('.')[:-1])
+            processed_data_dir = '_processed_data'
+        else:
+            print("file name is {}".format(self.file_name))
+            name_prefix = '.'.join(self.file_name.split('/')[-1].split('.')[:-1])
+            print("name_prefix is {}".format(name_prefix))
+            word_vec_name_prefix = '.'.join(self.word_vec_file_name.split('/')[-1].split('.')[:-1])
+            processed_data_dir = '_processed_data'
         if not os.path.isdir(processed_data_dir):
             print("Not processed data dir")
             return False
@@ -340,6 +351,7 @@ class json_file_data_loader(file_data_loader):
             random.shuffle(self.order) 
 
         print("Total relation fact: %d" % (self.relfact_tot))
+        print("Total iins fact: %d" % (self.instance_tot))
 
     def __iter__(self):
         return self
@@ -352,7 +364,8 @@ class json_file_data_loader(file_data_loader):
             self.idx = 0
             if self.shuffle:
                 random.shuffle(self.order) 
-            raise StopIteration
+            #raise StopIteration
+            return None
 
         batch_data = {}
 
@@ -373,20 +386,24 @@ class json_file_data_loader(file_data_loader):
         _scope = []
         cur_pos = 0
         for i in range(idx0, idx1):
-            _word.append(self.data_word[self.scope[self.order[i]][0]:self.scope[self.order[i]][1]])
-            _pos1.append(self.data_pos1[self.scope[self.order[i]][0]:self.scope[self.order[i]][1]])
-            _pos2.append(self.data_pos2[self.scope[self.order[i]][0]:self.scope[self.order[i]][1]])
-            _mask.append(self.data_mask[self.scope[self.order[i]][0]:self.scope[self.order[i]][1]])
+            if self.scope[self.order[i]][1]-self.scope[self.order[i]][0] > 5 * batch_size:
+                tail = self.scope[self.order[i]][0] + 5 * batch_size
+            else:
+                tail = self.scope[self.order[i]][1]
+            _word.append(self.data_word[self.scope[self.order[i]][0]:tail])
+            _pos1.append(self.data_pos1[self.scope[self.order[i]][0]:tail])
+            _pos2.append(self.data_pos2[self.scope[self.order[i]][0]:tail])
+            _mask.append(self.data_mask[self.scope[self.order[i]][0]:tail])
             _rel.append(self.data_rel[self.scope[self.order[i]][0]])
-            _ins_rel.append(self.data_rel[self.scope[self.order[i]][0]:self.scope[self.order[i]][1]])
-            _length.append(self.data_length[self.scope[self.order[i]][0]:self.scope[self.order[i]][1]])
-            bag_size = self.scope[self.order[i]][1] - self.scope[self.order[i]][0]
+            _ins_rel.append(self.data_rel[self.scope[self.order[i]][0]:tail])
+            _length.append(self.data_length[self.scope[self.order[i]][0]:tail])
+            bag_size = tail - self.scope[self.order[i]][0]
             _scope.append([cur_pos, cur_pos + bag_size])
             cur_pos = cur_pos + bag_size
 
             #if self.mode == self.MODE_ENTPAIR_BAG:
             _one_multi_rel = np.zeros((self.rel_tot), dtype=np.int32)
-            for j in range(self.scope[self.order[i]][0], self.scope[self.order[i]][1]):
+            for j in range(self.scope[self.order[i]][0], tail):
                 _one_multi_rel[self.data_rel[j]] = 1
             _multi_rel.append(_one_multi_rel)
             _entpair.append(self.scope_name[self.order[i]])
@@ -413,7 +430,7 @@ class json_file_data_loader(file_data_loader):
 
         #if self.mode == self.MODE_ENTPAIR_BAG:
         batch_data['multi_rel'] = np.stack(_multi_rel)
-        #batch_data['entpair'] = _entpair
+        batch_data['entpair'] = _entpair
 
         batch_data['length'] = np.concatenate(_length)
         batch_data['scope'] = np.stack(_scope)

@@ -3,14 +3,16 @@
 """ Training Config & Helper Classes  """
 
 import os
+import sys
 import json
 from typing import NamedTuple
 from tqdm import tqdm
+import time
 
 import numpy as np
 import torch
 import torch.nn as nn
-
+import sklearn.metrics
 import checkpoint
 
 
@@ -19,7 +21,7 @@ class Config(NamedTuple):
     seed: int = 3431 # random seed
     batch_size: int = 32
     lr: int = 5e-5 # learning rate
-    n_epochs: int = 10 # the number of epoch
+    n_epochs: int = 30 # the number of epoch
     # `warm up` period = warmup(0.1)*total_steps
     # linearly increasing learning rate from zero to the specified value(5e-5)
     warmup: float = 0.1
@@ -34,10 +36,11 @@ class Config(NamedTuple):
 
 class Trainer(object):
     """Training Helper Class"""
-    def __init__(self, cfg, model, data_iter, optimizer, save_dir, device):
+    def __init__(self, cfg, model, train_data_iter, test_data_iter, optimizer, save_dir, device):
         self.cfg = cfg # config for training : see class Config
         self.model = model
-        self.data_iter = data_iter # iterator to load data
+        self.data_iter = train_data_iter # iterator to load data
+        self.test_data_iter = test_data_iter
         self.optimizer = optimizer
         self.save_dir = save_dir
         self.device = device # device name
@@ -51,33 +54,39 @@ class Trainer(object):
             model = nn.DataParallel(model)
 
         global_step = 0 # global iteration steps regardless of epochs
-        for e in range(self.cfg.n_epochs):
+        for e in range(1):
             loss_sum = 0. # the sum of iteration losses to get average loss in every epoch
             iter_bar = tqdm(self.data_iter, desc='Iter (loss=X.XXX)')
             for i, batch in enumerate(iter_bar):
-                #batch = [t.to(self.device) for t in batch]
+                if batch==None:
+                    break
                 for k,v in batch.items():
-                    batch[k]= torch.from_numpy(np.array(v)).to(self.device)
+                    if k == "entpair":
+                        continue
+                    batch[k]= torch.from_numpy(np.array(v)).long().to(self.device)
                 self.optimizer.zero_grad()
+                self.model.zero_grad()
                 loss = get_loss(model, batch, global_step).mean() # mean() for Data Parallelism
                 loss.backward()
                 self.optimizer.step()
 
                 global_step += 1
                 loss_sum += loss.item()
-                iter_bar.set_description('Iter (loss=%5.3f)'%loss.item())
 
+                #iter_bar.set_description('Iter (loss=%5.3f)'%loss.item())
+                '''
                 if global_step % self.cfg.save_steps == 0: # save
-                    self.save(global_step)
-
+                    #self.save(global_step)
+                    pass
                 if self.cfg.total_steps and self.cfg.total_steps < global_step:
                     print('Epoch %d/%d : Average Loss %5.3f'%(e+1, self.cfg.n_epochs, loss_sum/(i+1)))
                     print('The Total Steps have been reached.')
                     self.save(global_step) # save and finish when global_steps reach total_steps
                     return
+                '''
 
             print('Epoch %d/%d : Average Loss %5.3f'%(e+1, self.cfg.n_epochs, loss_sum/(i+1)))
-        self.save(global_step)
+        #self.save(global_step)
 
     def eval(self, evaluate, model_file, data_parallel=True):
         """ Evaluation Loop """
@@ -87,17 +96,64 @@ class Trainer(object):
         if data_parallel: # use Data Parallelism with Multi-GPU
             model = nn.DataParallel(model)
 
-        results = [] # prediction results
-        iter_bar = tqdm(self.data_iter, desc='Iter (loss=X.XXX)')
-        for batch in iter_bar:
-            for k,v in batch.items():
-                    batch[k]= torch.from_numpy(np.array(v)).to(self.device)
-            with torch.no_grad(): # evaluation without gradient calculation
-                accuracy, result = evaluate(model, batch) # accuracy to print
-            results.append(result)
+        #results = [] # prediction results
+        test_result = []
+        pred_result = []
+        tot_correct = 0
+        tot_not_na_correct = 0
+        tot = 0
+        tot_not_na = 0
+        entpair_tot = 0
 
-            iter_bar.set_description('Iter(acc=%5.3f)'%accuracy)
-        return results
+        #iter_bar = tqdm(self.test_data_iter, desc='Iter (loss=X.XXX)')
+        for i,batch in enumerate(self.test_data_iter):
+            if batch==None:
+                break
+            for k,v in batch.items():
+                if k == "entpair":
+                    continue
+                batch[k]= torch.from_numpy(np.array(v)).long().to(self.device)
+            with torch.no_grad(): # evaluation without gradient calculation
+                accuracy, label_pred, label_id, iter_logit= evaluate(model, batch) # accuracy to print
+                
+                iter_logit = iter_logit.cpu()
+                iter_correct = (label_pred == label_id).sum()
+
+                
+                '''
+                with open("./result.txt","w") as f:
+                    for index in range(len(label_pred)):
+                        f.write("{} {}\n".format(label_pred[index],label_id[index]))
+                '''
+                iter_not_na_correct = np.logical_and((label_pred == label_id).cpu(), (label_id != 0).cpu()).sum()
+                #print(iter_correct.data, iter_not_na_correct.data)
+                tot_correct += iter_correct
+                tot_not_na_correct += iter_not_na_correct
+                tot += label_id.shape[0]
+                tot_not_na += (label_id != 0).sum()
+                if tot_not_na > 0:
+                    sys.stdout.write("[TEST] step %d | not NA accuracy: %f, accuracy: %f\r" % (i, float(tot_not_na_correct) / tot_not_na, float(tot_correct) / tot))
+                    sys.stdout.flush()
+                for idx in range(len(iter_logit)):
+                    for rel in range(1, self.cfg.labels_number):
+                        test_result.append({'score': iter_logit[idx][rel], 'flag': batch['multi_rel'][idx][rel]})
+                        if batch['entpair'][idx] != "None#None":
+                            pred_result.append({'score': float(iter_logit[idx][rel]), 'entpair': batch['entpair'][idx].encode('utf-8'), 'relation': rel})
+                    entpair_tot += 1 
+
+        #iter_bar.set_description('Iter(acc=%5.3f)'%accuracy)
+        print("test len is:{}".format(len(test_result)))
+        sorted_test_result = sorted(test_result, key=lambda x: x['score'])
+        print("sorted len is:{}".format(len(sorted_test_result)))
+        prec = []
+        recall = []
+        correct = 0
+        for i, item in enumerate(sorted_test_result[::-1]):
+            correct += item['flag']
+            prec.append(float(correct) / (i + 1))
+            recall.append(float(correct) / self.cfg.labels_number)
+        auc = sklearn.metrics.auc(x=recall, y=prec)
+        return auc
 
     def load(self, model_file, pretrain_file):
         """ load saved model or pretrained transformer (a part of model) """

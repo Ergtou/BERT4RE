@@ -21,14 +21,14 @@ class Config(NamedTuple):
     vocab_size: int = None # Size of Vocabulary
     dim: int = 50 # Dimension of Hidden Layer in Transformer Encoder
     n_layers: int = 2 # Numher of Hidden Layers
-    n_heads: int = 12 # Numher of Heads in Multi-Headed Attention Layers
+    n_heads: int = 5 # Numher of Heads in Multi-Headed Attention Layers
     dim_ff: int = 50*4 # Dimension of Intermediate Layers in Positionwise Feedforward Net
     #activ_fn: str = "gelu" # Non-linear Activation Function Type in Hidden Layers
     p_drop_hidden: float = 0.1 # Probability of Dropout of various Hidden Layers
     p_drop_attn: float = 0.1 # Probability of Dropout of Attention Layers
-    max_len: int = 512 # Maximum Length for Positional Embeddings
+    max_len: int = 120 # Maximum Length for Positional Embeddings
     n_segments: int = 2 # Number of Sentence Segments
-    labels_number: int = 54
+    labels_number: int = 53
 
     @classmethod
     def from_json(cls, file):
@@ -77,7 +77,7 @@ class Embeddings(nn.Module):
         pos = torch.arange(seq_len, dtype=torch.long, device=x.device)
         pos = pos.unsqueeze(0).expand_as(x) # (S,) -> (B, S)
 
-        e = self.tok_embed(x.long()) + self.pos_embed(pos.long()) + self.pos1_embed(pos1.long()) + self.pos2_embed(pos2.long())
+        e = self.tok_embed(x) + self.pos_embed(pos) + self.pos1_embed(pos1) + self.pos2_embed(pos2)
         return self.drop(self.norm(e))
 
 
@@ -92,7 +92,7 @@ class MultiHeadedSelfAttention(nn.Module):
         self.scores = None # for visualization
         self.n_heads = cfg.n_heads
 
-        self.sel_att = nn.Linear(cfg.dim // cfg.n_heads, cfg.max_len)
+        #self.sel_att = nn.Linear(cfg.dim // cfg.n_heads, cfg.max_len)
 
     def forward(self, x, mask):
         """
@@ -105,10 +105,10 @@ class MultiHeadedSelfAttention(nn.Module):
         q, k, v = (split_last(x, (self.n_heads, -1)).transpose(1, 2)
                    for x in [q, k, v])
         # (B, H, S, W) @ (B, H, W, S) -> (B, H, S, S) -softmax-> (B, H, S, S)
-        #scores = q @ k.transpose(-2, -1) / np.sqrt(k.size(-1))
+        scores = q @ k.transpose(-2, -1) / np.sqrt(k.size(-1))
 
         # attention #
-        scores = self.sel_att(q) / np.sqrt(k.size(-1))
+        #scores = self.sel_att(q) / np.sqrt(k.size(-1))
         if mask is not None:
             mask = mask[:, None, None, :].float()
             scores -= 10000.0 * (1.0 - mask)
@@ -117,7 +117,7 @@ class MultiHeadedSelfAttention(nn.Module):
         h = (scores @ v).transpose(1, 2).contiguous()
         # -merge-> (B, S, D)
         h = merge_last(h, 2)
-        self.scores = scores
+        #self.scores = scores
         return h
 
 
@@ -127,6 +127,7 @@ class PositionWiseFeedForward(nn.Module):
         super().__init__()
         self.fc1 = nn.Linear(cfg.dim, cfg.dim_ff)
         self.fc2 = nn.Linear(cfg.dim_ff, cfg.dim)
+        self.relu = nn.ReLU(inplace=True)
         #self.activ = lambda x: activ_fn(cfg.activ_fn, x)
 
     def forward(self, x):
