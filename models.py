@@ -57,27 +57,29 @@ class LayerNorm(nn.Module):
 
 class Embeddings(nn.Module):
     "The embedding module from word, position and token_type embeddings."
-    def __init__(self, cfg, word_vec_mat):
+    def __init__(self, cfg, word_tot):
         super().__init__()
         #self.tok_embed = nn.Embedding(cfg.vocab_size, cfg.dim) # token embedding
-        self.tok_embed = torch.from_numpy(word_vec_mat)
-        self.other_embed = torch.Tensor(5, cfg.dim)
-        self.other_embed = xavier_normal_(self.other_embed)
-        self.tok_embed = nn.Embedding.from_pretrained(torch.cat([self.tok_embed, self.other_embed], 0))
+        #self.tok_embed = torch.from_numpy(word_vec_mat)
+        #self.other_embed = torch.Tensor(5, cfg.dim)
+        #self.other_embed = xavier_normal_(self.other_embed)
+        #self.tok_embed = nn.Embedding.from_pretrained(torch.cat([self.tok_embed, self.other_embed], 0))
+        self.tok_embed = nn.Embedding(word_tot, cfg.dim)
         self.pos_embed = nn.Embedding(cfg.max_len, cfg.dim) # position embedding
         #self.seg_embed = nn.Embedding(cfg.n_segments, cfg.dim) # segment(token type) embedding
-        self.pos1_embed = nn.Embedding(cfg.max_len * 2, cfg.dim)
-        self.pos2_embed = nn.Embedding(cfg.max_len * 2, cfg.dim)
+        #self.pos1_embed = nn.Embedding(cfg.max_len * 2, cfg.dim)
+        #self.pos2_embed = nn.Embedding(cfg.max_len * 2, cfg.dim)
 
         self.norm = LayerNorm(cfg)
         self.drop = nn.Dropout(cfg.p_drop_hidden)
 
-    def forward(self, x, pos1, pos2):
+    def forward(self, x):
         seq_len = x.size(1)
         pos = torch.arange(seq_len, dtype=torch.long, device=x.device)
         pos = pos.unsqueeze(0).expand_as(x) # (S,) -> (B, S)
 
-        e = self.tok_embed(x) + self.pos_embed(pos) + self.pos1_embed(pos1) + self.pos2_embed(pos2)
+        #e = self.tok_embed(x) + self.pos_embed(pos) + self.pos1_embed(pos1) + self.pos2_embed(pos2)
+        e = self.tok_embed(x) + self.pos_embed(pos)
         return self.drop(self.norm(e))
 
 
@@ -155,13 +157,13 @@ class Block(nn.Module):
 
 class Transformer(nn.Module):
     """ Transformer with Self-Attentive Blocks"""
-    def __init__(self, cfg, word_vec_mat):
+    def __init__(self, cfg, word_tot):
         super().__init__()
-        self.embed = Embeddings(cfg, word_vec_mat)
+        self.embed = Embeddings(cfg, word_tot)
         self.blocks = nn.ModuleList([Block(cfg) for _ in range(cfg.n_layers)])
 
-    def forward(self, x, pos1, pos2, mask):
-        h = self.embed(x, pos1, pos2)
+    def forward(self, x, mask):
+        h = self.embed(x)
         for block in self.blocks:
             h = block(h, mask)
         return h

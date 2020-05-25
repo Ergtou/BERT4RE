@@ -31,8 +31,11 @@ class Config(NamedTuple):
 
     @classmethod
     def from_json(cls, file): # load config from json file
-        return cls(**json.load(open(file, "r")))
+        d = json.load(open(file, "r"))
+        return cls(**d)
 
+    def modify_total_steps(self, total_steps):
+        self.total_steps = total_steps
 
 class Trainer(object):
     """Training Helper Class"""
@@ -56,14 +59,19 @@ class Trainer(object):
         global_step = 0 # global iteration steps regardless of epochs
         for e in range(1):
             loss_sum = 0. # the sum of iteration losses to get average loss in every epoch
-            iter_bar = tqdm(self.data_iter, desc='Iter (loss=X.XXX)')
+            #iter_bar = tqdm(self.data_iter, desc='Iter (loss=X.XXX)')
+            iter_bar = self.data_iter
             for i, batch in enumerate(iter_bar):
                 if batch==None:
                     break
-                for k,v in batch.items():
-                    if k == "entpair":
-                        continue
-                    batch[k]= torch.from_numpy(np.array(v)).long().to(self.device)
+                if type(batch)==dict:
+                    for k,v in batch.items():
+                        if k == "entpair":
+                            continue
+                        batch[k]= torch.from_numpy(np.array(v)).long().to(self.device)
+                elif type(batch)==list:
+                    #batch = [torch.from_numpy(np.array(k)).long().to(self.device) for k in batch]
+                    batch = [k.to(self.device) for k in batch]
                 self.optimizer.zero_grad()
                 self.model.zero_grad()
                 loss = get_loss(model, batch, global_step).mean() # mean() for Data Parallelism
@@ -74,6 +82,7 @@ class Trainer(object):
                 loss_sum += loss.item()
 
                 #iter_bar.set_description('Iter (loss=%5.3f)'%loss.item())
+                print("Loss is {}".format(loss.item()))
                 '''
                 if global_step % self.cfg.save_steps == 0: # save
                     #self.save(global_step)
@@ -86,7 +95,7 @@ class Trainer(object):
                 '''
 
             print('Epoch %d/%d : Average Loss %5.3f'%(e+1, self.cfg.n_epochs, loss_sum/(i+1)))
-        #self.save(global_step)
+        self.save(global_step)
 
     def eval(self, evaluate, model_file, data_parallel=True):
         """ Evaluation Loop """
@@ -151,7 +160,8 @@ class Trainer(object):
         for i, item in enumerate(sorted_test_result[::-1]):
             correct += item['flag']
             prec.append(float(correct) / (i + 1))
-            recall.append(float(correct) / self.cfg.labels_number)
+            recall.append(float(correct) / self.test_data_iter.relfact_tot)
+        print("P100 : {}, P200 :{}, P300 :{}, P500 :{}, P1000 :{}, P2000 :{}".format(prec[100],prec[200],prec[300],prec[500],prec[1000],prec[2000]))
         auc = sklearn.metrics.auc(x=recall, y=prec)
         return auc
 

@@ -34,6 +34,7 @@ class Classifier(nn.Module):
         self.classifier = nn.Linear(cfg.dim, n_labels)
         self.att = nn.Embedding(cfg.labels_number, cfg.dim)
         self.bias = nn.Parameter(torch.Tensor(n_labels))
+        self.output_drop = nn.Dropout(2*cfg.p_drop_hidden)
 
         self.init_weights()
 
@@ -107,10 +108,6 @@ def main(task='mrpc',
          max_len=128,
          mode='eval'):
 
-    cfg = train.Config.from_json(train_cfg)
-    model_cfg = models.Config.from_json(model_cfg)
-
-    set_seeds(cfg.seed)
 
     '''
     tokenizer = tokenization.FullTokenizer(vocab_file=vocab, do_lower_case=True)
@@ -126,14 +123,22 @@ def main(task='mrpc',
 
     torch.backends.cudnn.benchmark = True
 
+    cfg = train.Config.from_json(train_cfg)
+    model_cfg = models.Config.from_json(model_cfg)
+
+    set_seeds(cfg.seed)
+
     dataset_dir = os.path.join('./data', 'nyt')
     train_data_iter = json_file_data_loader(os.path.join(dataset_dir, 'train.json'), 
                                         os.path.join(dataset_dir, 'word_vec.json'),
-                                        os.path.join(dataset_dir, 'rel2id.json'), shuffle=True, batch_size=cfg.batch_size)
+                                        os.path.join(dataset_dir, 'rel2id.json'), shuffle=True, batch_size= cfg.batch_size)
 
     test_data_iter = json_file_data_loader(os.path.join(dataset_dir, 'test.json'), 
                                         os.path.join(dataset_dir, 'word_vec.json'),
-                                        os.path.join(dataset_dir, 'rel2id.json'), shuffle=True, batch_size=cfg.batch_size)
+                                        os.path.join(dataset_dir, 'rel2id.json'), shuffle=True, batch_size= cfg.batch_size, test= True)
+
+    right_steps = (train_data_iter.entpair_tot // cfg.batch_size + 1) * cfg.n_epochs
+    print("Total_ent_pair is {}, total_steps is {}".format(train_data_iter.entpair_tot, right_steps))
 
     model = Classifier(model_cfg, cfg.labels_number, train_data_iter.word_vec_mat)
     criterion = nn.CrossEntropyLoss()
@@ -142,7 +147,7 @@ def main(task='mrpc',
                             model,
                             train_data_iter,
                             test_data_iter,
-                            optim.optim4GPU(cfg, model),
+                            optim.optim4GPU(cfg, model, right_steps),
                             save_dir, get_device())
 
     #if mode == 'train':

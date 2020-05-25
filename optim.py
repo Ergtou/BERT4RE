@@ -146,7 +146,7 @@ class BertAdam(Optimizer):
 
 
 
-def optim4GPU(cfg, model):
+def optim4GPU(cfg, model, total_steps):
     """ optimizer for GPU training """
     param_optimizer = list(model.named_parameters())
     no_decay = ['bias', 'gamma', 'beta']
@@ -156,4 +156,4 @@ def optim4GPU(cfg, model):
     return BertAdam(optimizer_grouped_parameters,
                     lr=cfg.lr,
                     warmup=cfg.warmup,
-                    t_total=cfg.total_steps)
+                    t_total=total_steps)

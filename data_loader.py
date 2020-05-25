@@ -81,7 +81,7 @@ class json_file_data_loader(file_data_loader):
         print("Finish loading")
         return True
 
-    def __init__(self, file_name, word_vec_file_name, rel2id_file_name, shuffle=True, max_length=120, case_sensitive=False, reprocess=False, batch_size=160):
+    def __init__(self, file_name, word_vec_file_name, rel2id_file_name, shuffle=True, max_length=120, case_sensitive=False, reprocess=False, batch_size=160, test=False):
         '''
         file_name: Json file storing the data in the following format
             [
@@ -207,10 +207,21 @@ class json_file_data_loader(file_data_loader):
                 tail = ins['tail']['word']
 
                 ### Modified sentence ###
-                sentence = sentence.replace(head," SEP "+head+" SEP ")
-                sentence = sentence.replace(tail," SEP "+tail+" SEP ")
-                sentence = "CLS "+sentence
-                sentence = ' '.join(ins['sentence'].split()) # delete extra spaces
+                #sentence = sentence.replace(head," SEP "+head+" SEP ")
+                #sentence = sentence.replace(tail," SEP "+tail+" SEP ")
+                #sentence = "CLS "+sentence
+                sentence = "CLS " + " SEP "+ head +" SEP "+ " SEP " + tail + " SEP " + sentence
+                
+                if test!=True and random.random()< 0:
+                    relation_words = ins['relation'].split("/")
+                    final_words = []
+                    for word in relation_words:
+                        if "_" in word:
+                            final_words.extend(word.split("_"))
+                        elif word!='':
+                            final_words.append(word)
+                    sentence = sentence + " " + " ".join(set(final_words))
+                sentence = ' '.join(sentence.split()) # delete extra spaces
                 ###  ###
 
                 cur_entpair = ins['head']['id'] + '#' + ins['tail']['id']
