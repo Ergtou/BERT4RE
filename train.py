@@ -48,7 +48,7 @@ class Trainer(object):
         self.save_dir = save_dir
         self.device = device # device name
 
-    def train(self, get_loss, model_file=None, pretrain_file=None, data_parallel=True):
+    def train(self, get_loss, model_file=None, pretrain_file=None, data_parallel=True, evaluate = None):
         """ Train Loop """
         self.model.train() # train mode
         self.load(model_file, pretrain_file)
@@ -57,18 +57,26 @@ class Trainer(object):
             model = nn.DataParallel(model)
 
         global_step = 0 # global iteration steps regardless of epochs
-        for e in range(1):
+        best_auc = 0
+        best_epo = 0
+        for e in range(self.cfg.n_epochs):
             loss_sum = 0. # the sum of iteration losses to get average loss in every epoch
             #iter_bar = tqdm(self.data_iter, desc='Iter (loss=X.XXX)')
             iter_bar = self.data_iter
+            self.model.train() # train mode
             for i, batch in enumerate(iter_bar):
                 if batch==None:
                     break
                 if type(batch)==dict:
-                    for k,v in batch.items():
-                        if k == "entpair":
-                            continue
-                        batch[k]= torch.from_numpy(np.array(v)).long().to(self.device)
+                    try:
+                        for k,v in batch.items():
+                            if k == "entpair":
+                                continue
+                            batch[k]= torch.from_numpy(np.array(v)).long().to(self.device)
+                        #batch = {k:torch.from_numpy(v).long().to(self.device) for k,v in batch.items()}
+                    except:
+                        print("Data Error")
+                        continue
                 elif type(batch)==list:
                     #batch = [torch.from_numpy(np.array(k)).long().to(self.device) for k in batch]
                     batch = [k.to(self.device) for k in batch]
@@ -94,8 +102,15 @@ class Trainer(object):
                     return
                 '''
 
+            auc = self.eval(evaluate, model_file, data_parallel)
+            print("### AUC of {} epoch is {} ###".format(e, auc))
             print('Epoch %d/%d : Average Loss %5.3f'%(e+1, self.cfg.n_epochs, loss_sum/(i+1)))
-        self.save(global_step)
+            
+            if auc > best_auc:
+                best_auc = auc
+                best_epo = e
+                self.save(e)
+        print("Best auc is {}".format(best_auc))
 
     def eval(self, evaluate, model_file, data_parallel=True):
         """ Evaluation Loop """
@@ -164,6 +179,28 @@ class Trainer(object):
         print("P100 : {}, P200 :{}, P300 :{}, P500 :{}, P1000 :{}, P2000 :{}".format(prec[100],prec[200],prec[300],prec[500],prec[1000],prec[2000]))
         auc = sklearn.metrics.auc(x=recall, y=prec)
         return auc
+    
+    def pretrain_eval(self, evaluate, model_file, data_parallel=True):
+        """ Evaluation Loop """
+        self.model.eval() # evaluation mode
+        self.load(model_file, None)
+        model = self.model.to(self.device)
+        if data_parallel: # use Data Parallelism with Multi-GPU
+            model = nn.DataParallel(model)
+        #iter_bar = tqdm(self.test_data_iter, desc='Iter (loss=X.XXX)')
+        results = []
+        for i,batch in enumerate(self.test_data_iter):
+            if batch==None:
+                break
+            for k,v in batch.items():
+                if k == "entpair":
+                    continue
+                batch[k]= torch.from_numpy(np.array(v)).long().to(self.device)
+            with torch.no_grad(): # evaluation without gradient calculation
+                accuracy, result= evaluate(model, batch) # accuracy to print
+                #print("Acc is {}".format(accuracy))
+            results.append(result)
+        return results
 
     def load(self, model_file, pretrain_file):
         """ load saved model or pretrained transformer (a part of model) """

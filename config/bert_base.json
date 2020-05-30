@@ -1,11 +1,11 @@
 {
-	"dim": 50,
-	"dim_ff": 200,
+	"dim": 312,
+	"dim_ff": 1200,
 	"n_layers": 1,
 	"p_drop_attn": 0.1,
 	"n_heads": 5,
 	"p_drop_hidden": 0.1,
-	"max_len": 120,
+	"max_len": 512,
 	"n_segments": 2,
 	"vocab_size": 30522,
 	"labels_number": 53
